@@ -13,8 +13,6 @@ services:
     container_name: webserver
     build:
       context: .
-    environment:
-      NODE_ENV: production
     ports:
       - 80:80
 
