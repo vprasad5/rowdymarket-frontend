@@ -1,85 +1,55 @@
-# syntax=docker/dockerfile:1
+# 1. For build React app
+FROM node:lts AS development
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/go/dockerfile-reference/
+# Set working directory
+WORKDIR /app
 
-# Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
+# 
+COPY package.json /app/package.json
+COPY package-lock.json /app/package-lock.json
 
-ARG NODE_VERSION=20.11.1
+# Same as npm install
+RUN npm ci
 
-################################################################################
-# Use node image for base image for all stages.
-FROM node:${NODE_VERSION}-alpine as base
+COPY . /app
 
-# Set working directory for all build stages.
-WORKDIR /usr/src/app
+ENV CI=true
+ENV PORT=3000
 
+CMD [ "npm", "start" ]
 
-################################################################################
-# Create a stage for installing production dependecies.
-FROM base as deps
+FROM development AS build
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.npm to speed up subsequent builds.
-# Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
-# into this layer.
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
-
-################################################################################
-# Create a stage for building the application.
-FROM deps as build
-
-# Download additional development dependencies before building, as some projects require
-# "devDependencies" to be installed to build. If you don't need this, remove this step.
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,target=/root/.npm \
-    npm ci
-
-# Copy the rest of the source files into the image.
-COPY . .
-# Run the build script.
 RUN npm run build
 
-################################################################################
-# Create a new stage to run the application with minimal runtime dependencies
-# where the necessary files are copied from the build stage.
-FROM base as final
+FROM development as dev-envs
+RUN <<EOF
+apt-get update
+apt-get install -y --no-install-recommends git
+EOF
 
-# Use production node environment by default.
-ENV NODE_ENV production
+RUN <<EOF
+useradd -s /bin/bash -m vscode
+groupadd docker
+usermod -aG docker vscode
+EOF
+# install Docker tools (cli, buildx, compose)
+COPY --from=gloursdocker/docker / /
+CMD [ "npm", "start" ]
 
-RUN apk update
+# 2. For Nginx setup
+FROM nginx:alpine
 
-#RUN wget http://nginx.org/keys/nginx_signing.key
-RUN wget -O /etc/apk/keys/nginx_signing.rsa.pub https://cs.nginx.com/static/keys/nginx_signing.rsa.pub
+# Copy config nginx
+COPY --from=build /app/.nginx/nginx.conf /etc/nginx/conf.d/default.conf
 
-RUN apk add --no-cache nginx
+WORKDIR /usr/share/nginx/html
 
-RUN cp /etc/nginx/http.d/default.conf /etc/nginx/http.d/default.conf.bak
-RUN rm -f /etc/nginx/http.d/default.conf
+# Remove default nginx static assets
+RUN rm -rf ./*
 
-# Run the application as a non-root user.
-#USER node
-USER root
+# Copy static assets from builder stage
+COPY --from=build /app/dist .
 
-# Copy package.json so that package manager commands can be used.
-COPY package.json .
-
-# Copy the production dependencies from the deps stage and also
-# the built application from the build stage into the image.
-COPY --from=deps /usr/src/app/node_modules ./node_modules
-#COPY --from=build /usr/src/app/dist/ ./dist/
-#COPY --from=deps /usr/src/app/node_modules /var/www/html/
-COPY --from=build /usr/src/app/dist/ /usr/share/nginx/html
-COPY --from=build /usr/src/app/nginx_default/default.conf /etc/nginx/http.d
-
-# Expose the port that the application listens on.
-EXPOSE 80
-
-# Run the application.
-CMD ["nginx", "-g", "daemon off;"]
+# Containers run nginx with global directives and daemon off
+ENTRYPOINT ["nginx", "-g", "daemon off;"]

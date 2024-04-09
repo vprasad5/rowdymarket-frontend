@@ -17,8 +17,6 @@ services:
       NODE_ENV: production
     ports:
       - 80:80
-    #stdin_open: true # docker run -i
-    #tty: true        # docker run -t
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to
